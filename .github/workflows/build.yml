@@ -1,0 +1,67 @@
+name: build
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -CeEuo pipefail {0}
+
+on:
+  push:
+    tags:
+      - "v*"
+    branches:
+      - "main"
+  pull_request:
+  schedule:
+    - cron: "0 0 1 * *"   # Monthly: run at 00:00 UTC on the 1st of each month
+  workflow_dispatch:
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          path-type: inherit
+          install: >-
+            zip
+            unzip
+            curl
+      - uses: actions/checkout@v4
+      - name: download
+        shell: msys2 {0}
+        id: build
+        run: |
+          bash ./build.sh
+
+      - name: release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ steps.build.outputs.tag }}
+          artifacts: "dist/*.zip"
+          allowUpdates: true
+
+
+      - name: Update readme
+        run: |
+          # Replace first line with current time comment, keep rest as-is
+          echo "<!-- $(date -u '+%Y-%m-%d %H:%M:%S UTC') -->" > readme_new.md
+          tail -n +2 README.md >> readme_new.md
+          mv readme_new.md README.md
+          cat README.md
+
+      - name: Commit and push readme
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git diff --cached --quiet || (git commit -m "chore: update readme with build time" && git push)
+
