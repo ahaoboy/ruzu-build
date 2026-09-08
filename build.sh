@@ -13,7 +13,7 @@ DEFAULT_VERSION='22.1.0'
 TARGET_VERSION="${1:-$DEFAULT_VERSION}"
 
 # All firmware / prodkeys versions: every one is downloaded and kept in dist/
-VERSIONS=('19.0.1' '20.5.0' '21.0.0' '22.0.0' '22.1.0')
+VERSIONS=('19.0.1' '20.5.0' '21.0.0' '22.0.0' '22.1.0' '22.5.0')
 
 log() { echo "[build] $*"; }
 
@@ -41,6 +41,10 @@ resolve_urls() {
         22.1.0)
             prodkeys_url="https://files.prodkeys.net/ProdKeys.NET-v22.1.0.zip"
             firmware_url="https://github.com/THZoria/NX_Firmware/releases/download/22.1.0/Firmware.22.1.0.zip"
+            ;;
+        22.5.0)
+            prodkeys_url="https://files.prodkeys.net/ProdKeys.NET-v22.5.0.zip"
+            firmware_url="https://github.com/THZoria/NX_Firmware/releases/download/22.5.0/Firmware.22.5.0.zip"
             ;;
         *)
             echo "ERROR: unsupported version '$version' (supported: ${VERSIONS[*]})" >&2

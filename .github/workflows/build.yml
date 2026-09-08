@@ -42,6 +42,19 @@ jobs:
         run: |
           bash ./build.sh
 
+      - name: fetch ruzu source
+        shell: msys2 {0}
+        run: |
+          # Publish the upstream Ruzu source alongside the binaries. Uses the
+          # GitHub auto-generated archive of the main branch (the latest
+          # development source; a tagged archive requires manual bumping on
+          # every release). The archive excludes git submodules
+          # (rxbyak / rhazel), which are fetched from their own remotes when
+          # building from source.
+          curl -fL --retry 3 \
+            -o "dist/Ruzu-Source-main.zip" \
+            "https://github.com/vricosti/ruzu-emu/archive/refs/heads/main.zip"
+
       - name: release
         uses: ncipollo/release-action@v1
         with:
