@@ -17,6 +17,38 @@ VERSIONS=('19.0.1' '20.5.0' '21.0.0' '22.0.0' '22.1.0' '22.5.0')
 
 log() { echo "[build] $*"; }
 
+# Echo the directory that actually holds the package payload for `dir`. The
+# upstream Ruzu release zip wraps everything in one top-level folder whose name
+# does not always match the asset name (e.g. the asset may be
+# Ruzu-Windows-0.0.1-x64-msvc.zip while the folder inside is
+# Ruzu-Windows-v0.1.1-rc1-x64-msvc/). When `dir` contains exactly one entry and
+# that entry is a directory, it is that wrapper, so return it; otherwise `dir`
+# already holds the files directly and is returned unchanged.
+package_root() {
+    local dir="$1" entries=() entry
+    # Match hidden entries too: a single hidden directory is still a wrapper.
+    for entry in "$dir"/* "$dir"/.[!.]* "$dir"/..?*; do
+        [[ -e "$entry" ]] || continue
+        entries+=("$entry")
+    done
+    if [[ ${#entries[@]} -eq 1 && -d "${entries[0]}" ]]; then
+        printf '%s\n' "${entries[0]}"
+    else
+        printf '%s\n' "$dir"
+    fi
+}
+
+# Repack the package directory `src` into the archive `out`, stripping the
+# upstream wrapper folder via package_root so the archive always has ruzu.exe
+# at its root instead of one folder deep.
+zip_package() {
+    local src="$1" out="$2" root
+    out="$PWD/$out"
+    root=$(package_root "$src")
+    rm -f "$out"
+    (cd "$root" && zip -r -q "$out" .)
+}
+
 # Map a firmware version to its prodkeys / firmware download URLs.
 # Sets globals: prodkeys_url, firmware_url, prodkeys_zip, firmware_zip
 resolve_urls() {
@@ -124,45 +156,42 @@ curl -fL --retry 3 -o "dist/$filename" "$download_url"
 
 # ---------- 5. Extract ----------
 # Prodkeys / firmware are unpacked per-version inside the variant loop
-# (step 8), so only Ruzu itself is extracted here.
+# (step 8), so only Ruzu itself is extracted here. The upstream wrapper folder
+# is left in place: it is stripped when the package is repacked (zip_package),
+# which keeps the final archive shape independent of how the zip was built.
 rm -rf ruzu ruzu-win
-unzip -q "dist/$filename" -d ruzu-win
-
-# The release zip wraps everything in a top-level folder named after the
-# asset (e.g. Ruzu-Windows-0.0.1-x64-msvc/). Normalize it to ./ruzu; if a
-# future build ships the files at the zip root instead, fall back to that.
-if [[ -d "./ruzu-win/${filename%.zip}" ]]; then
-    mv "./ruzu-win/${filename%.zip}" ./ruzu
-    rmdir ruzu-win 2>/dev/null || true
-else
-    mv ./ruzu-win ./ruzu
-fi
+unzip -q "dist/$filename" -d ruzu
 
 # Ruzu switches to portable mode when a "user" folder sits next to the
-# executable, so create it before the first launch (otherwise config, keys
-# and firmware would land in %APPDATA%\ruzu instead).
-mkdir -p ./ruzu/user
+# executable, so it must be created before the first launch (otherwise config,
+# keys and firmware would land in %APPDATA%\ruzu instead). The executable may
+# sit one level down inside the upstream wrapper folder, so resolve the real
+# package root first.
+ruzu_dir=$(package_root ./ruzu)
 
 # ---------- 6. First run to generate the portable config ----------
-cd ruzu
-# On Linux, wine is required (wine ./ruzu.exe &)
-if command -v wine >/dev/null 2>&1; then
-    wine ./ruzu.exe &
-else
-    ./ruzu.exe &
-fi
-pid=$!
-sleep 10
-kill "$pid" 2>/dev/null || true
+mkdir -p "$ruzu_dir/user"
+(
+    cd "$ruzu_dir"
+    # On Linux, wine is required (wine ./ruzu.exe &)
+    if command -v wine >/dev/null 2>&1; then
+        wine ./ruzu.exe &
+    else
+        ./ruzu.exe &
+    fi
+    pid=$!
+    sleep 10
+    kill "$pid" 2>/dev/null || true
+)
 
 # ---------- 7. Package the base (no prodkeys / firmware) ----------
 # Ruzu (like eden) has no Config.json: it writes yuzu-style INI files under
 # user/config/ on first run, and the defaults are shipped untouched (game
 # directories are added from the UI). Every variant below is a copy of this
 # base directory, so all packages share the same pristine settings.
-cd ..
-rm -f "dist/$filename"
-(cd ruzu && zip -r -q "../dist/$filename" .)
+# zip_package strips the upstream wrapper folder, so the archive holds
+# ruzu.exe at its root.
+zip_package ./ruzu "dist/$filename"
 log "base package: $filename"
 
 # ---------- 8. Package per-firmware variants ----------
@@ -182,9 +211,12 @@ for version in "${VERSIONS[@]}"; do
     unzip -q "dist/$firmware_zip" -d Firmware
 
     # Ruzu stores keys under user/keys and firmware under the virtual NAND
-    # at user/nand/system/Contents/registered — the same layout as eden.
-    keys_dir="ruzu-$version/user/keys"
-    registered_dir="ruzu-$version/user/nand/system/Contents/registered"
+    # at user/nand/system/Contents/registered — the same layout as eden. The
+    # copy may still carry the upstream wrapper folder, so resolve the real
+    # package root before placing them.
+    variant_root=$(package_root "ruzu-$version")
+    keys_dir="$variant_root/user/keys"
+    registered_dir="$variant_root/user/nand/system/Contents/registered"
     mkdir -p "$keys_dir" "$registered_dir"
 
     # Prodkeys zips may nest the keys in subfolders (e.g. Keys-22.1.0/),
@@ -230,8 +262,7 @@ for version in "${VERSIONS[@]}"; do
         done
     )
 
-    rm -f "dist/$variant"
-    (cd "ruzu-$version" && zip -r -q "../dist/$variant" .)
+    zip_package "ruzu-$version" "dist/$variant"
     rm -rf "ruzu-$version" ProdKeys Firmware
     log "variant done: $variant"
 done
