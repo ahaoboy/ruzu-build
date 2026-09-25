@@ -17,6 +17,20 @@ VERSIONS=('19.0.1' '20.5.0' '21.0.0' '22.0.0' '22.1.0' '22.5.0')
 
 log() { echo "[build] $*"; }
 
+# Extract `archive` into `dir` (created if missing) with 7-Zip. Deliberately
+# not Info-ZIP's unzip: upstream Windows archives store `\` as the path
+# separator, which makes unzip exit 1 ("warning") even though it extracts
+# correctly — and under `set -e` that warning aborts the build. 7z converts
+# those separators silently and exits 0, so any non-zero exit here is a real
+# failure worth stopping for.
+extract_archive() {
+    local archive="$1" dir="$2"
+    7z x "$archive" -o"$dir" -y -bso0 -bsp0 || {
+        echo "ERROR: failed to extract $archive" >&2
+        exit 1
+    }
+}
+
 # Echo the directory that actually holds the package payload for `dir`. The
 # upstream Ruzu release zip wraps everything in one top-level folder whose name
 # does not always match the asset name (e.g. the asset may be
@@ -46,7 +60,7 @@ zip_package() {
     out="$PWD/$out"
     root=$(package_root "$src")
     rm -f "$out"
-    (cd "$root" && zip -r -q "$out" .)
+    (cd "$root" && 7z a -tzip -mx=5 "$out" . -bso0 -bsp0)
 }
 
 # Map a firmware version to its prodkeys / firmware download URLs.
@@ -141,13 +155,13 @@ for version in "${VERSIONS[@]}"; do
     log "re-zipping $prodkeys_zip (flat layout)"
     rm -rf rezip_tmp
     mkdir -p rezip_tmp
-    unzip -q "dist/$prodkeys_zip" -d rezip_tmp
+    extract_archive "dist/$prodkeys_zip" rezip_tmp
     # -mindepth 2 moves only files that live in a subfolder; a top-level file
     # is already flat, and `mv file .` would fail with "are the same file".
     (cd rezip_tmp \
         && find . -mindepth 2 -type f -exec mv -f {} . \; \
         && find . -type d -empty -delete)
-    (cd rezip_tmp && zip -r -q -X "../dist/$prodkeys_zip.tmp" .)
+    (cd rezip_tmp && 7z a -tzip -mx=5 "../dist/$prodkeys_zip.tmp" . -bso0 -bsp0)
     mv -f "dist/$prodkeys_zip.tmp" "dist/$prodkeys_zip"
     rm -rf rezip_tmp
 done
@@ -162,7 +176,7 @@ curl -fL --retry 3 -o "dist/$filename" "$download_url"
 # is left in place: it is stripped when the package is repacked (zip_package),
 # which keeps the final archive shape independent of how the zip was built.
 rm -rf ruzu ruzu-win
-unzip -q "dist/$filename" -d ruzu
+extract_archive "dist/$filename" ruzu
 
 # Ruzu switches to portable mode when a "user" folder sits next to the
 # executable, so it must be created before the first launch (otherwise config,
@@ -209,8 +223,8 @@ for version in "${VERSIONS[@]}"; do
 
     rm -rf "ruzu-$version" ProdKeys Firmware
     cp -r ruzu "ruzu-$version"
-    unzip -q "dist/$prodkeys_zip" -d ProdKeys
-    unzip -q "dist/$firmware_zip" -d Firmware
+    extract_archive "dist/$prodkeys_zip" ProdKeys
+    extract_archive "dist/$firmware_zip" Firmware
 
     # Ruzu stores keys under user/keys and firmware under the virtual NAND
     # at user/nand/system/Contents/registered — the same layout as eden. The
