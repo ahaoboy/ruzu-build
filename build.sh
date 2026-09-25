@@ -142,8 +142,10 @@ for version in "${VERSIONS[@]}"; do
     rm -rf rezip_tmp
     mkdir -p rezip_tmp
     unzip -q "dist/$prodkeys_zip" -d rezip_tmp
+    # -mindepth 2 moves only files that live in a subfolder; a top-level file
+    # is already flat, and `mv file .` would fail with "are the same file".
     (cd rezip_tmp \
-        && find . -type f -exec mv -f {} . \; \
+        && find . -mindepth 2 -type f -exec mv -f {} . \; \
         && find . -type d -empty -delete)
     (cd rezip_tmp && zip -r -q -X "../dist/$prodkeys_zip.tmp" .)
     mv -f "dist/$prodkeys_zip.tmp" "dist/$prodkeys_zip"
