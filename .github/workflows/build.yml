@@ -36,11 +36,11 @@ jobs:
             curl
       - uses: actions/checkout@v4
       - name: install ei
-        shell: msys2 {0}
+        # shell: msys2 {0}
         run: |
           curl -fsSL https://raw.githubusercontent.com/easy-install/easy-install/main/install.sh | sh
       - name: install nsk
-        shell: msys2 {0}
+        # shell: msys2 {0}
         run: |
           ei https://github.com/ahaoboy/nsk
 
