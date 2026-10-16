@@ -221,68 +221,17 @@ for version in "${VERSIONS[@]}"; do
     variant="${filename/-x64-msvc/-${version}-x64-msvc}"
     log "building variant: $variant"
 
-    rm -rf "ruzu-$version" ProdKeys Firmware
+    rm -rf "ruzu-$version"
     cp -r ruzu "ruzu-$version"
-    extract_archive "dist/$prodkeys_zip" ProdKeys
-    extract_archive "dist/$firmware_zip" Firmware
-
-    # Ruzu stores keys under user/keys and firmware under the virtual NAND
-    # at user/nand/system/Contents/registered — the same layout as eden. The
-    # copy may still carry the upstream wrapper folder, so resolve the real
-    # package root before placing them.
     variant_root=$(package_root "ruzu-$version")
-    keys_dir="$variant_root/user/keys"
-    registered_dir="$variant_root/user/nand/system/Contents/registered"
-    mkdir -p "$keys_dir" "$registered_dir"
 
-    # Prodkeys zips may nest the keys in subfolders (e.g. Keys-22.1.0/),
-    # so find *.keys recursively instead of assuming a flat layout.
-    find ProdKeys -name '*.keys' -type f -exec cp -f {} "$keys_dir/" \;
-
-    # Same for firmware: copy every .nca regardless of any nesting.
-    find Firmware -name '*.nca' -type f -exec cp -f {} "$registered_dir/" \;
-
-    # Reorganize firmware NCAs into the <id>.nca/00 layout Ruzu expects
-    # (same as eden / yuzu) for installed firmware titles.
-    #
-    # Why move each file away FIRST? Firmware ships BOTH <id>.nca and
-    # <id>.cnmt.nca for the same title. If we created <id>.nca/ while the
-    # plain <id>.nca file still exists, mkdir would fail with "File exists"
-    # (a file and a folder cannot share the same name). Relocating the file
-    # to a hidden temp name first sidesteps that entirely.
-    # .nca_tmp is safe to reuse every iteration: real NCA names always end
-    # in ".nca", so the temp name can never collide with an actual file.
-    (
-        cd "$registered_dir"
-        for file in *; do
-            nca=$(basename "$file")
-
-            # Derive the title ID from the NCA filename:
-            #   <id>.cnmt.nca  ->  <id>   (control metadata; strip ".cnmt")
-            #   <id>.nca       ->  <id>   (regular content; strip ".nca")
-            # Anything else (subfolders, non-NCA files) is skipped.
-            if [[ $nca == *.cnmt.nca ]]; then
-                xxx=${nca%.cnmt.nca}
-            elif [[ $nca == *.nca ]]; then
-                xxx=${nca%.nca}
-            else
-                continue
-            fi
-
-            # 1. Move the file out of the way (prevents the mkdir collision above)
-            mv "$file" ".nca_tmp"
-            # 2. Create the per-title folder
-            mkdir -p "$xxx.nca"
-            # 3. Move the file into place as "00" (the content index inside a title)
-            mv ".nca_tmp" "$xxx.nca/00"
-        done
-    )
+    nsk keys install     "dist/$prodkeys_zip" "$variant_root/user/keys"
+    nsk firmware install "dist/$firmware_zip" "$variant_root/user/nand/system/Contents/registered"
 
     zip_package "ruzu-$version" "dist/$variant"
-    rm -rf "ruzu-$version" ProdKeys Firmware
+    rm -rf "ruzu-$version"
     log "variant done: $variant"
 done
-
 # ---------- 9. Output GitHub Actions variables ----------
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
     echo "tag=$latest_tag" >> "$GITHUB_OUTPUT"
